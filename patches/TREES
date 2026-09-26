@@ -1,0 +1,13 @@
+# Arboles de terceros: de donde se clonan y en que commit exacto. tools/restore-trees.sh los
+# rehace desde cero con esto + patches/<diff>; tools/snapshot-trees.sh regenera los diffs.
+#
+# dir               url                                          commit                                    diff                          archivos-nuevos
+love                https://github.com/love2d/love.git           6eb8d546736d5915a8b5af30b2cf33456dfdcb1a  love-11.5.diff                src/common/ps4.cpp,src/common/ps4.h
+deps/openal-soft    https://github.com/kcat/openal-soft.git      d3875f333fb6abe2f39d82caca329414871ae53b  openal-soft-1.23.1.diff       -
+deps/luajit         https://github.com/LuaJIT/LuaJIT.git         c6ffc141a8762b41703f9287d63d93622a13dd8f  luajit-2.1.diff               -
+SDL2                https://github.com/orbis-ports/SDL2          8967814a1e2c1a7ffd9da5c3eb8ffbeec4aed81a  -                             -
+deps/freetype       https://gitlab.freedesktop.org/freetype/freetype.git  42608f77f20749dd6ddc9e0536788eaad70ea4b5  -  -
+deps/ogg            https://github.com/xiph/ogg.git              e1774cd77f471443541596e09078e78fdc342e4f  -                             -
+deps/vorbis         https://github.com/xiph/vorbis.git           0657aee69dec8508a0011f47f3b69d7538e9d262  -                             -
+deps/zlib           https://github.com/madler/zlib.git           51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf  -                             -
+# Lua 5.1.5 no es git: deps/build-deps.sh baja lua-5.1.5.tar.gz de lua.org si falta deps/lua51.

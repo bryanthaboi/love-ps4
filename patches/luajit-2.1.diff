@@ -1,0 +1,13 @@
+diff --git a/src/lib_os.c b/src/lib_os.c
+index d91cb976ea58336c0506c6b48ef7f28f52bbc2c8..e53cabaa67b01f97686952d0bf3ae65034b89264 100644
+--- a/src/lib_os.c
++++ b/src/lib_os.c
+@@ -101,7 +101,7 @@ LJLIB_CF(os_tmpname)
+ 
+ LJLIB_CF(os_getenv)
+ {
+-#if LJ_TARGET_CONSOLE
++#if LJ_TARGET_CONSOLE && !LJ_TARGET_PS4  /* love-ps4: la PS4 homebrew si tiene getenv */
+   lua_pushnil(L);
+ #else
+   lua_pushstring(L, getenv(luaL_checkstring(L, 1)));  /* if NULL push nil */

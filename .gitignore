@@ -1,0 +1,48 @@
+# Clones de terceros. Se rehacen con los scripts de parcheo; ver CLAUDE.md.
+/love/
+/SDL2/
+/gen1recomp/
+/orbis-compat/
+/orbis-porting-kit/
+/deps/freetype/
+/deps/ogg/
+/deps/vorbis/
+/deps/zlib/
+/deps/lua51/
+/deps/lua515.tar.gz
+
+# Salidas de build (1,2 GB) y artefactos intermedios
+/build/
+/dist/
+/deps/b-*/
+/deps/out/
+/deps/*.log
+
+# Material del usuario y binarios grandes: ROMs, paquetes, imagenes de disco
+/usb/
+/serve/
+*.pkg
+*.gb
+*.gbc
+*.gba
+*.love
+*.elf
+*.oelf
+eboot.bin
+
+# Capturas de log de la consola
+/logs/*.log
+
+.DS_Store
+
+# Artefactos de compilacion sueltos
+*.o
+*.a
+
+# Marcadores de posicion de tools/logs-up.sh
+/logs/.watch-*
+/deps/openal-soft/
+/deps/luajit/
+
+# Clones para contribuir upstream (PRs): fuera de git
+/upstream/

@@ -1,0 +1,1105 @@
+diff --git a/src/common/config.h b/src/common/config.h
+index 94848e32c022dbcd34f4650da24a2ffc737aed74..c7c32ad643f7b21eaeeaae2191dcbe97b70974dd 100644
+--- a/src/common/config.h
++++ b/src/common/config.h
+@@ -53,6 +53,21 @@
+ #	define LOVE_LINUX 1
+ #endif
+ 
++// PlayStation 4 (Orbis). El toolchain define __FreeBSD__, asi que LOVE_LINUX ya
++// quedo puesto arriba y con el toda la ruta posix. LOVE_PS4 solo marca las
++// diferencias, y por eso SIEMPRE se comprueba ANTES que LOVE_LINUX.
++#if defined(__ORBIS__)
++#	define LOVE_PS4 1
++// ⚠ Y LOVE_LINUX A MANO, aunque el toolchain defina __FreeBSD__ y el bloque de
++// arriba parezca cubrirlo. libc++ del SDK hace `#undef __FreeBSD__` en su
++// __config (sdk/include/c++/v1/__config:12), asi que la macro sobrevive en cada
++// .c y desaparece en cada .cpp que incluya un header de libc++ - es decir, en
++// casi todo LOVE. Verificarlo compilando C da un falso verde.
++#	ifndef LOVE_LINUX
++#		define LOVE_LINUX 1
++#	endif
++#endif
++
+ // Endianness.
+ #if defined(__ppc__) || defined(__ppc) || defined(__powerpc__) || defined(__powerpc)
+ #	define LOVE_BIG_ENDIAN 1
+@@ -121,7 +136,7 @@
+ #endif
+ #endif
+ 
+-#if defined(LOVE_MACOSX) || defined(LOVE_IOS)
++#if defined(LOVE_MACOSX) || defined(LOVE_IOS) || defined(LOVE_PS4)
+ #	define LOVE_LEGENDARY_APP_ARGV_HACK
+ #endif
+ 
+@@ -165,6 +180,18 @@
+ #	define LOVE_ENABLE_ENET
+ #	define LOVE_ENABLE_LUASOCKET
+ #	define LOVE_ENABLE_LUA53
++
++// --- LOVE_PS4: modulos que este port no compila ---
++// video  -> libtheora no esta portada, y gen1recomp no usa love.video (0 usos).
++// enet / luasocket -> sin stack de red utilizable; el juego ya desactiva la red
++// en consola por su propia deteccion de plataforma.
++#ifdef LOVE_PS4
++#	undef LOVE_ENABLE_VIDEO
++#	undef LOVE_ENABLE_ENET
++#	undef LOVE_ENABLE_LUASOCKET
++#	define LOVE_NO_MODPLUG 1
++#	define LOVE_NOMPG123 1
++#endif
+ #endif
+ 
+ // Check we have a sane configuration
+diff --git a/src/libraries/dr_flac/dr_flac.h b/src/libraries/dr_flac/dr_flac.h
+index ed31a1e01f784ed79e3ab2f9d7b7dff86088a7c6..cf8777ee95688569e9be203ce6e8f62b740ec57f 100644
+--- a/src/libraries/dr_flac/dr_flac.h
++++ b/src/libraries/dr_flac/dr_flac.h
+@@ -8141,7 +8141,11 @@ static drflac_result drflac_result_from_errno(int e)
+         case ENOSTR: return DRFLAC_ERROR;
+     #endif
+     #ifdef ENODATA
++/* LOVE_PS4: orbis-compat define ENODATA como ECONNREFUSED porque Orbis no tiene
++ * el primero, y este switch tiene un case para cada uno -> valor duplicado. */
++#if !defined(ENODATA) || !defined(ECONNREFUSED) || (ENODATA != ECONNREFUSED)
+         case ENODATA: return DRFLAC_NO_DATA_AVAILABLE;
++#endif
+     #endif
+     #ifdef ETIME
+         case ETIME: return DRFLAC_TIMEOUT;
+diff --git a/src/libraries/physfs/physfs_platform_posix.c b/src/libraries/physfs/physfs_platform_posix.c
+index 7ba5e10708ccde43e4f47a9a2dcfafb81fe178b7..daff123c95cc8b5bb3273c8bde6017b078f71617 100644
+--- a/src/libraries/physfs/physfs_platform_posix.c
++++ b/src/libraries/physfs/physfs_platform_posix.c
+@@ -85,6 +85,19 @@ static char *getUserDirByUID(void)
+ 
+ char *__PHYSFS_platformCalcUserDir(void)
+ {
++#ifdef __ORBIS__
++    /* Orbis no tiene $HOME ni getpwuid: esta funcion devolvia NULL y hacia que
++     * PHYSFS_init() fallara por el camino de goto initFailed, que NO setea
++     * codigo de error - por eso LOVE reportaba "Failed to initialize
++     * filesystem: no error". /data es el unico arbol escribible del homebrew.
++     * El separador final es obligatorio: physfs.c lo comprueba con assert(). */
++    {
++        const char *dir = "/data/love/";
++        char *r = (char *) allocator.Malloc(strlen(dir) + 1);
++        if (r) strcpy(r, dir);
++        return r;
++    }
++#else
+     char *retval = NULL;
+     char *envr = getenv("HOME");
+ 
+@@ -113,6 +126,7 @@ char *__PHYSFS_platformCalcUserDir(void)
+         retval = getUserDirByUID();
+ 
+     return retval;
++#endif /* __ORBIS__ */
+ } /* __PHYSFS_platformCalcUserDir */
+ 
+ 
+diff --git a/src/libraries/physfs/physfs_platform_unix.c b/src/libraries/physfs/physfs_platform_unix.c
+index b945e03fd96bb1ce746198b5d261f23ef3598563..1c360d75b8540042d9bc715198aae342686821ed 100644
+--- a/src/libraries/physfs/physfs_platform_unix.c
++++ b/src/libraries/physfs/physfs_platform_unix.c
+@@ -248,6 +248,16 @@ static char *readSymLink(const char *path)
+ 
+ char *__PHYSFS_platformCalcBaseDir(const char *argv0)
+ {
++#ifdef __ORBIS__
++    /* El paquete se monta siempre en /app0 y no hay /proc del que leer el
++     * enlace al ejecutable. Separador final obligatorio (assert en physfs.c). */
++    {
++        const char *dir = "/app0/";
++        char *r = (char *) allocator.Malloc(strlen(dir) + 1);
++        if (r) strcpy(r, dir);
++        return r;
++    }
++#endif
+     char *retval = NULL;
+     const char *envr = NULL;
+ 
+diff --git a/src/libraries/physfs/physfs_platforms.h b/src/libraries/physfs/physfs_platforms.h
+index 1ac17d9c6fcce48f2abd2bbd32227cd02f227b05..b43badeb548d7d8aa15a6838e33a749e951c8741 100644
+--- a/src/libraries/physfs/physfs_platforms.h
++++ b/src/libraries/physfs/physfs_platforms.h
+@@ -53,6 +53,14 @@
+ #  define PHYSFS_PLATFORM_SOLARIS 1
+ #  define PHYSFS_PLATFORM_UNIX 1
+ #  define PHYSFS_PLATFORM_POSIX 1
++#elif defined(__ORBIS__)
++/* PlayStation 4. El toolchain define __FreeBSD__, asi que sin esta rama caeria
++ * en la de abajo y arrastraria PHYSFS_PLATFORM_BSD -> <sys/ucred.h> y
++ * getmntinfo(), que esta consola no tiene. Mismo trato que __EMSCRIPTEN__:
++ * posix para el I/O, unix para los directorios, y sin enumeracion de montajes. */
++#  define PHYSFS_NO_CDROM_SUPPORT 1
++#  define PHYSFS_PLATFORM_UNIX 1
++#  define PHYSFS_PLATFORM_POSIX 1
+ #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
+ #  define PHYSFS_PLATFORM_FREEBSD 1
+ #  define PHYSFS_PLATFORM_BSD 1
+diff --git a/src/love.cpp b/src/love.cpp
+index 97673a33adb7a3863efbea9bf4e284359b228b8e..b3ebc3e7321b98a6eac1fb7d179de06d99a523d8 100644
+--- a/src/love.cpp
++++ b/src/love.cpp
+@@ -21,8 +21,36 @@
+ #include "common/version.h"
+ #include "common/runtime.h"
+ #include "modules/love/love.h"
++
++#ifdef LOVE_PS4
++#include <ps4_app.h>
++#include "common/ps4.h"
++#ifdef LOVE_PS4_LUAJIT
++#include <orbis/Sysmodule.h>
++#endif
++#include <sys/stat.h> // mkdir, parche 20
++#include <cerrno>
++// Lua BitOp (Mike Pall): es de donde sale el `bit` de LuaJIT, publicado aparte
++// como modulo para Lua 5.1.  Sin esto, un juego escrito contra LuaJIT no puede
++// hacer una sola operacion binaria: gen1recomp lo usa en mas de diez archivos
++// -- importador de ROM, sintetizador de audio, conversion de partidas, animaciones.
++extern "C" int luaopen_bit(lua_State *L);
++// El lock del allocator de musl esta condicionado a libc.threaded, y en este
++// binario nadie lo pone. Detalle completo en love-ps4/libc_threaded.c.
++extern "C" int ps4_libc_enable_malloc_locking(void);
++#endif
+ #include <SDL.h>
+ 
++#if defined(LOVE_PS4) && defined(LOVE_PS4_GUARD_ALLOC)
++// Allocator con canarios, para localizar quien desborda. Ver love-ps4/guardalloc.c.
++extern "C" void *ps4_guard_alloc(void *ud, void *ptr, size_t osize, size_t nsize);
++#endif
++#if defined(LOVE_PS4) && (defined(LOVE_PS4_GUARD_ALLOC) || defined(LOVE_PS4_GUARD_MALLOC))
++extern "C" void ps4_guard_arm(void);
++extern "C" void ps4_guard_sweep(const char *when);
++#endif
++
++
+ #ifdef LOVE_BUILD_EXE
+ 
+ // Lua
+@@ -64,6 +92,7 @@ LOVE_EXPORT DWORD AmdPowerXpressRequestHighPerformance = 1;
+ #ifdef LOVE_LEGENDARY_APP_ARGV_HACK
+ 
+ #include <vector>
++#include <string>
+ 
+ // Explicitly instantiate std::vector<std::string> to work around linker issues
+ // with libc++ when symbols are hidden-by-default.
+@@ -73,6 +102,19 @@ template class std::vector<std::string>;
+ static void get_app_arguments(int argc, char **argv, int &new_argc, char **&new_argv)
+ {
+ 	std::vector<std::string> temp_argv;
++#ifdef LOVE_PS4
++	// El loader entrega argv[0] vacio y LOVE se lo pasa a PHYSFS_init(), que lo
++	// usa para localizar el ejecutable. Se sustituye por la ruta real.
++	if (argc == 0 || argv[0] == nullptr || argv[0][0] == '\0')
++	{
++		temp_argv.push_back(love::ps4::getExecutablePath());
++		ps4_log("argv hack: argv[0] estaba vacio -> '%s'", temp_argv[0].c_str());
++		argc = (argc > 0) ? argc : 1;
++		for (int i = 1; i < argc; i++)
++			if (argv[i]) temp_argv.push_back(std::string(argv[i]));
++		goto ps4_argv_done;
++	}
++#endif
+ 	for (int i = 0; i < argc; i++)
+ 	{
+ 		// Don't copy -psn_xxx argument from argv.
+@@ -80,6 +122,9 @@ static void get_app_arguments(int argc, char **argv, int &new_argc, char **&new_
+ 			temp_argv.push_back(std::string(argv[i]));
+ 	}
+ 
++#ifdef LOVE_PS4
++ps4_argv_done:
++#endif
+ 	// If it exists, add the love file in love.app/Contents/Resources/ to argv.
+ 	std::string loveResourcesPath;
+ 	bool fused = true;
+@@ -87,6 +132,12 @@ static void get_app_arguments(int argc, char **argv, int &new_argc, char **&new_
+ 	loveResourcesPath = love::macosx::getLoveInResources();
+ #elif defined(LOVE_IOS)
+ 	loveResourcesPath = love::ios::getLoveInResources(fused);
++#elif defined(LOVE_PS4)
++	// Sin esto el hack corre pero no inserta nada: LOVE arranca sin juego.
++	loveResourcesPath = love::ps4::getLoveInResources(fused);
++	ps4_log("argv hack: juego en '%s' (fused=%d)",
++	        loveResourcesPath.empty() ? "(nada encontrado)" : loveResourcesPath.c_str(),
++	        (int)fused);
+ #endif
+ 	if (!loveResourcesPath.empty())
+ 	{
+@@ -129,6 +180,32 @@ static void get_app_arguments(int argc, char **argv, int &new_argc, char **&new_
+ 
+ #endif // LOVE_LEGENDARY_APP_ARGV_HACK
+ 
++
++#ifdef LOVE_PS4
++// LOVE reporta errores de arranque y de runtime con print(), que va a stdout y
++// en esta consola no llega a ningun lado. Se reemplaza por el canal de red, que
++// es el unico que podemos leer.
++static int ps4_lua_print(lua_State *L)
++{
++	int n = lua_gettop(L);
++	std::string out;
++	lua_getglobal(L, "tostring");
++	for (int i = 1; i <= n; i++)
++	{
++		lua_pushvalue(L, -1);
++		lua_pushvalue(L, i);
++		lua_call(L, 1, 1);
++		const char *s = lua_tostring(L, -1);
++		if (i > 1) out += "\t";
++		out += s ? s : "(null)";
++		lua_pop(L, 1);
++	}
++	lua_pop(L, 1);
++	ps4_log("[lua] %s", out.c_str());
++	return 0;
++}
++#endif
++
+ static int love_preload(lua_State *L, lua_CFunction f, const char *name)
+ {
+ 	lua_getglobal(L, "package");
+@@ -160,9 +237,27 @@ static DoneAction runlove(int argc, char **argv, int &retval)
+ 	}
+ 
+ 	// Create the virtual machine.
++#if defined(LOVE_PS4) && defined(LOVE_PS4_GUARD_ALLOC)
++	lua_State *L = lua_newstate(ps4_guard_alloc, nullptr);
++#else
+ 	lua_State *L = luaL_newstate();
++#endif
+ 	luaL_openlibs(L);
+ 
++#ifdef LOVE_PS4
++	lua_pushcfunction(L, ps4_lua_print);
++	lua_setglobal(L, "print");
++	ps4_log("print() de Lua redirigido al netlog");
++
++	// luaopen_bit deja la tabla en el global `bit` bajo Lua 5.1, que es como la
++	// buscan los juegos escritos para LuaJIT (rawget(_G, "bit")).
++	luaopen_bit(L);
++	lua_pop(L, 1);
++	lua_getglobal(L, "bit");
++	ps4_log("bit library: %s", lua_istable(L, -1) ? "instalada (Lua BitOp)" : "!! NO quedo global");
++	lua_pop(L, 1);
++#endif
++
+ 	// LuaJIT-specific setup needs to be done as early as possible - before
+ 	// get_app_arguments because that loads external library code. This is also
+ 	// loaded inside love's Lua threads. Note that it doesn't use the love table.
+@@ -237,6 +332,15 @@ static DoneAction runlove(int argc, char **argv, int &retval)
+ 		lua_pop(L, lua_gettop(L) - stackpos);
+ #endif
+ 
++#ifdef LOVE_PS4
++	{
++		int t = lua_type(L, -1);
++		const char *ts = lua_typename(L, t);
++		const char *vs = lua_tostring(L, -1);
++		ps4_log("love.boot() devolvio tipo=%s valor='%s'", ts ? ts : "?", vs ? vs : "(no convertible)");
++	}
++#endif
++
+ 	retval = 0;
+ 	DoneAction done = DONE_QUIT;
+ 
+@@ -263,10 +367,79 @@ static DoneAction runlove(int argc, char **argv, int &retval)
+ 
+ int main(int argc, char **argv)
+ {
++#ifdef LOVE_PS4
++	// Primero de todo: abrir el canal de log. Sin esto un fallo temprano es
++	// invisible - la consola solo reporta "crash" y stdout no llega a ningun lado.
++	ps4_app_init("love", PS4_APP_STAMP);
++
++	// Inmediatamente despues del log y antes que nada mas: a partir de la
++	// primera llamada a SDL_Init hay hilos, y un malloc sin lock entre varios
++	// hilos corrompe la free-list en vez de fallar.
++	{
++		const int before = ps4_libc_enable_malloc_locking();
++		ps4_log("libc.threaded: %d -> 1 (%s)", before,
++		        before ? "ya estaba puesto" : "lock del allocator ACTIVADO");
++	}
++#if defined(LOVE_PS4_GUARD_ALLOC) || defined(LOVE_PS4_GUARD_MALLOC)
++	ps4_guard_arm();
++#endif
++	// Mesa llama a sceGnmSubmitDone() en cada frame solo si esta variable existe; sin eso
++	// la consola no puede suspender la app, y cerrarla SUSPENDE primero. Ver el parche 12.
++	setenv("ORBIS_SUBMIT_DONE", "1", 0);
++	ps4_log("ORBIS_SUBMIT_DONE=%s (sceGnmSubmitDone por frame, para poder suspender/cerrar)",
++	        getenv("ORBIS_SUBMIT_DONE"));
++	if (FILE *envf = fopen("/data/love/env.txt", "r"))
++	{
++		char line[512];
++		int n = 0;
++		while (fgets(line, sizeof(line), envf))
++		{
++			line[strcspn(line, "\r\n")] = '\0';
++			if (line[0] == '#' || line[0] == '\0')
++				continue;
++			char *eq = strchr(line, '=');
++			if (!eq || eq == line)
++			{
++				ps4_log("env.txt: linea ignorada (sin CLAVE=valor): '%s'", line);
++				continue;
++			}
++			*eq = '\0';
++			setenv(line, eq + 1, 1);
++			ps4_log("env.txt: %s=%s", line, eq + 1);
++			n++;
++		}
++		fclose(envf);
++		ps4_log("env.txt: %d variable(s) cargada(s) de /data/love/env.txt", n);
++	}
++#ifdef LOVE_PS4_LUAJIT
++	{
++		const int rc = sceSysmoduleLoadModule(ORBIS_SYSMODULE_RANDOM);
++		ps4_log("libSceRandom (semilla de LuaJIT): sceSysmoduleLoadModule rc=0x%08x%s", rc,
++		        rc == 0 ? "" : " -- ⚠ lua_newstate va a fallar con PRX_NOT_RESOLVED_FUNCTION");
++	}
++#endif
++	{
++		// LOVE_PS4: cache de shaders de Mesa en disco (parche 20 de patches/love-plataforma.py)
++		setenv("MESA_SHADER_CACHE_DIR", "/data/love/cache", 0);
++		const char *dir = getenv("MESA_SHADER_CACHE_DIR");
++		const int rc = mkdir(dir, 0777);
++		ps4_log("MESA_SHADER_CACHE_DIR=%s (mkdir rc=%d%s)", dir, rc,
++		        rc == 0 ? ", creada" : (errno == EEXIST ? ", ya existia" : ", ⚠ sin cache de shaders"));
++	}
++	ps4_log("== LOVE %s arrancando en PS4 (argc=%d)", LOVE_VERSION_STRING, argc);
++	for (int i = 0; i < argc; i++)
++		ps4_log("   argv[%d] = %s", i, argv[i] ? argv[i] : "(null)");
++#endif
++
+ 	if (strcmp(LOVE_VERSION_STRING, love_version()) != 0)
+ 	{
+ 		printf("Version mismatch detected!\nLOVE binary is version %s\n"
+ 			   "LOVE library is version %s\n", LOVE_VERSION_STRING, love_version());
++#ifdef LOVE_PS4
++		ps4_log("!! desajuste de version: binario '%s' vs libreria '%s'",
++		        LOVE_VERSION_STRING, love_version());
++		ps4_idle_forever("version mismatch");
++#endif
+ 		return 1;
+ 	}
+ 
+@@ -275,7 +448,13 @@ int main(int argc, char **argv)
+ 
+ 	do
+ 	{
++#ifdef LOVE_PS4
++		ps4_log("-> runlove()");
++#endif
+ 		done = runlove(argc, argv, retval);
++#ifdef LOVE_PS4
++		ps4_log("<- runlove() devolvio done=%d retval=%d", (int)done, retval);
++#endif
+ 
+ #ifdef LOVE_IOS
+ 		// on iOS we should never programmatically exit the app, so we'll just
+@@ -289,6 +468,21 @@ int main(int argc, char **argv)
+ 	SDL_Quit();
+ #endif
+ 
++#ifdef LOVE_PS4
++	// ⚠ RETORNAR DE main() EN ESTA CONSOLA ES SIGSYS DENTRO DE _exit, y el
++	// sistema lo reporta como crash de la aplicacion. Es exactamente lo que
++	// vimos con rdi=1 en el primer arranque.
++	ps4_log("== LOVE termino con retval=%d; idle en vez de return", retval);
++	{
++		// LOVE_PS4: salir al menu de la consola (parche 19 de patches/love-plataforma.py)
++		// nombre fijado con __asm__ como en SDL_orbisvideo.c:677 (extern "C" no vale aca adentro)
++		extern int32_t ps4_LoadExec(const char *path, const char *args[]) __asm__("sceSystemServiceLoadExec");
++		int32_t rc = ps4_LoadExec("exit", nullptr);
++		ps4_log("sceSystemServiceLoadExec(\"exit\") -> 0x%08x (0 = el sistema cierra la app)", (unsigned)rc);
++	}
++	ps4_idle_forever("love main done");
++#endif
++
+ 	return retval;
+ }
+ 
+diff --git a/src/modules/audio/openal/Audio.cpp b/src/modules/audio/openal/Audio.cpp
+index c1d0c1981eda0c884d689be532c276fe02af4eb0..415874ba71a68a7efdcbe18b808363170f87a2ec 100644
+--- a/src/modules/audio/openal/Audio.cpp
++++ b/src/modules/audio/openal/Audio.cpp
+@@ -19,6 +19,9 @@
+  **/
+ 
+ #include "Audio.h"
++#ifdef LOVE_PS4
++#include <ps4_app.h>
++#endif
+ #include "common/delay.h"
+ #include "RecordingDevice.h"
+ #include "sound/Decoder.h"
+@@ -110,7 +113,7 @@ Audio::Audio()
+ 	}
+ 
+ 	{
+-#if defined(LOVE_LINUX)
++#if defined(LOVE_LINUX) && !defined(LOVE_PS4)
+ 		// Temporarly block signals, as the thread inherits this mask
+ 		love::thread::ScopedDisableSignals disableSignals;
+ #endif
+@@ -119,7 +122,15 @@ Audio::Audio()
+ 		device = alcOpenDevice(nullptr);
+ 
+ 		if (device == nullptr)
++		{
++#ifdef LOVE_PS4
++			ps4_log("OpenAL: alcOpenDevice(NULL) devolvio NULL - LOVE cae a audio nulo (sin sonido)");
++#endif
+ 			throw love::Exception("Could not open device.");
++		}
++#ifdef LOVE_PS4
++		ps4_log("OpenAL: dispositivo '%s'", alcGetString(device, ALC_DEVICE_SPECIFIER));
++#endif
+ 
+ #ifdef ALC_EXT_EFX
+ 		ALint attribs[4] = { ALC_MAX_AUXILIARY_SENDS, MAX_SOURCE_EFFECTS, 0, 0 };
+@@ -134,6 +145,10 @@ Audio::Audio()
+ 
+ 		if (!alcMakeContextCurrent(context) || alcGetError(device) != ALC_NO_ERROR)
+ 			throw love::Exception("Could not make context current.");
++#ifdef LOVE_PS4
++		ps4_log("OpenAL: contexto listo - %s, %s, %s", (const char *) alGetString(AL_RENDERER),
++		        (const char *) alGetString(AL_VERSION), (const char *) alGetString(AL_VENDOR));
++#endif
+ 	}
+ 
+ #ifdef ALC_EXT_EFX
+diff --git a/src/modules/event/sdl/Event.cpp b/src/modules/event/sdl/Event.cpp
+index c1f217a9c5a67a46e4f9b10817309bd2a17fcdfc..de05b33cccd66760c5d3d1052ea0bdf8aefac170 100644
+--- a/src/modules/event/sdl/Event.cpp
++++ b/src/modules/event/sdl/Event.cpp
+@@ -593,6 +593,23 @@ Message *Event::convertWindowEvent(const SDL_Event &e)
+ 	{
+ 	case SDL_WINDOWEVENT_FOCUS_GAINED:
+ 	case SDL_WINDOWEVENT_FOCUS_LOST:
++#ifdef LOVE_PS4
++	{
++		// ⚠ EN PS4 ESTE ES EL UNICO AVISO DE SUSPENSION QUE LLEGA.
++		// El camino normal de LOVE para pausar el render cuelga de
++		// SDL_APP_DIDENTERBACKGROUND (ver Event.cpp:93), y el driver de video
++		// orbis NUNCA lo emite: su ORBIS_PollLifecycle solo llama
++		// SDL_SetKeyboardFocus(), que produce FOCUS_LOST/GAINED y nada mas.
++		//
++		// Sin esto el bucle sigue enviando trabajo a la GPU mientras el sistema
++		// intenta suspender, el handshake se agota y el proceso muere con
++		// CPU_FAULT_SUBMITDONE_TIMEOUT_IN_SUSPEND_ASYNC (0xa0d0c00a) - medido
++		// en hardware con la sonda sdlgl antes de escribir esto.
++		auto gfx = Module::getInstance<graphics::Graphics>(Module::M_GRAPHICS);
++		if (gfx)
++			gfx->setActive(e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED);
++	}
++#endif
+ 		vargs.emplace_back(e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED);
+ 		msg = new Message("focus", vargs);
+ 		break;
+diff --git a/src/modules/filesystem/Filesystem.cpp b/src/modules/filesystem/Filesystem.cpp
+index 395c87e01ececffc81ff26d2cd0ac03cf3741b27..b059302823109de629d3f76fdc60d83e794c5f25 100644
+--- a/src/modules/filesystem/Filesystem.cpp
++++ b/src/modules/filesystem/Filesystem.cpp
+@@ -36,6 +36,9 @@
+ #elif defined(LOVE_LINUX)
+ #include <unistd.h>
+ #endif
++#ifdef LOVE_PS4
++#include "common/ps4.h"
++#endif
+ 
+ namespace love
+ {
+@@ -105,6 +108,10 @@ std::string Filesystem::getExecutablePath() const
+ 
+ 	return to_utf8(buffer);
+ 
++#elif defined(LOVE_PS4)
++
++	return love::ps4::getExecutablePath();
++
+ #elif defined(LOVE_LINUX)
+ 
+ 	char buffer[2048] = {0};
+diff --git a/src/modules/filesystem/physfs/Filesystem.cpp b/src/modules/filesystem/physfs/Filesystem.cpp
+index d3c650269c0dc5d51af6666411122096680433ab..3da5668953c2428d054ba3c3cdc4979b7447d567 100644
+--- a/src/modules/filesystem/physfs/Filesystem.cpp
++++ b/src/modules/filesystem/physfs/Filesystem.cpp
+@@ -32,6 +32,10 @@
+ // PhysFS
+ #include "libraries/physfs/physfs.h"
+ 
++#ifdef LOVE_PS4
++#include "common/ps4.h"
++#endif
++
+ // For great CWD. (Current Working Directory)
+ // Using this instead of boost::filesystem which totally
+ // cramped our style.
+@@ -536,6 +540,8 @@ std::string Filesystem::getUserDirectory()
+ #ifdef LOVE_IOS
+ 	// PHYSFS_getUserDir doesn't give exactly the path we want on iOS.
+ 	static std::string userDir = normalize(love::ios::getHomeDirectory());
++#elif defined(LOVE_PS4)
++	static std::string userDir = normalize(love::ps4::getUserDirectory());
+ #else
+ 	static std::string userDir = normalize(PHYSFS_getUserDir());
+ #endif
+@@ -559,6 +565,8 @@ std::string Filesystem::getAppdataDirectory()
+ 		appdata = normalize(udir);
+ #elif defined(LOVE_IOS)
+ 		appdata = normalize(love::ios::getAppdataDirectory());
++#elif defined(LOVE_PS4)
++		appdata = getUserDirectory();
+ #elif defined(LOVE_LINUX)
+ 		char *xdgdatahome = getenv("XDG_DATA_HOME");
+ 		if (!xdgdatahome)
+diff --git a/src/modules/filesystem/wrap_Filesystem.cpp b/src/modules/filesystem/wrap_Filesystem.cpp
+index 6a448f478cea7d5e466563a89384f2364ae47d29..70a736cf1717d2c8e9bb67b1759f6c040cf5688d 100644
+--- a/src/modules/filesystem/wrap_Filesystem.cpp
++++ b/src/modules/filesystem/wrap_Filesystem.cpp
+@@ -739,6 +739,13 @@ int loader(lua_State *L)
+ {
+ 	std::string modulename = luax_checkstring(L, 1);
+ 
++	// LOVE_PS4: ver el parche 17 de patches/love-plataforma.py.
++	if (instance() == nullptr)
++	{
++		lua_pushfstring(L, "\n\tno '%s' in LOVE game directories (love.filesystem not ready).", modulename.c_str());
++		return 1;
++	}
++
+ 	for (char &c : modulename)
+ 	{
+ 		if (c == '.')
+@@ -779,6 +786,13 @@ static const char *library_extensions[] =
+ int extloader(lua_State *L)
+ {
+ 	std::string filename = luax_checkstring(L, 1);
++
++	// LOVE_PS4: ver el parche 17 de patches/love-plataforma.py.
++	if (instance() == nullptr)
++	{
++		lua_pushfstring(L, "\n\tno file '%s' in LOVE paths (love.filesystem not ready).", filename.c_str());
++		return 1;
++	}
+ 	std::string tokenized_name(filename);
+ 	std::string tokenized_function(filename);
+ 
+diff --git a/src/modules/graphics/opengl/StreamBuffer.cpp b/src/modules/graphics/opengl/StreamBuffer.cpp
+index db520e6124e54ec62bd3e50dad9137ba723f3aa3..66b0cde3210dd15f664e5b3fdf10ad4c0d8e4e41 100644
+--- a/src/modules/graphics/opengl/StreamBuffer.cpp
++++ b/src/modules/graphics/opengl/StreamBuffer.cpp
+@@ -499,6 +499,7 @@ love::graphics::StreamBuffer *CreateStreamBuffer(BufferType mode, size_t size)
+ 		{
+ 			// AMD's pinned memory seems to be faster than persistent mapping,
+ 			// on AMD GPUs.
++#ifndef LOVE_PS4
+ 			if (GLAD_AMD_pinned_memory && gl.getVendor() == OpenGL::VENDOR_AMD)
+ 			{
+ 				try
+@@ -514,6 +515,7 @@ love::graphics::StreamBuffer *CreateStreamBuffer(BufferType mode, size_t size)
+ 					// Fall through to other implementations when that happens.
+ 				}
+ 			}
++#endif // LOVE_PS4: sin AMD pinned memory
+ 
+ 			if (GLAD_VERSION_4_4 || GLAD_ARB_buffer_storage)
+ 				return new StreamBufferPersistentMapSync(mode, size);
+diff --git a/src/modules/love/boot.lua b/src/modules/love/boot.lua
+index 038cab634cb2ee225f744d7bd7ed0b18a01941b8..749ce06bdd92f47a2a5a6d02cf18ffe42d6da3d3 100644
+--- a/src/modules/love/boot.lua
++++ b/src/modules/love/boot.lua
+@@ -248,7 +248,15 @@ function love.init()
+ 		"physics",
+ 	} do
+ 		if c.modules[v] then
+-			require("love." .. v)
++			-- LOVE_PS4: este require NO tenia pcall, y un modulo que el port
++			-- compila fuera (love.video: libtheora no esta portada) tiraba el
++			-- arranque entero de cualquier .love cuyo conf.lua lo dejara en el
++			-- default true -- que es el default. El juego no tiene por que saber
++			-- que modulos existen en esta consola.
++			local ok, err = pcall(require, "love." .. v)
++			if not ok then
++				print(("[love] modulo '%s' no disponible en esta plataforma, se omite"):format(v))
++			end
+ 		end
+ 	end
+ 
+@@ -329,6 +337,134 @@ function love.init()
+ 	elseif invalid_game_path then
+ 		error("Cannot load game at path '" .. invalid_game_path .. "'.\nMake sure a folder exists at the specified path.")
+ 	end
++
++	-- LOVE_PS4: medidor de rendimiento. LOVE_PS4_PROFILE=<segundos> (en /data/love/env.txt)
++	-- imprime cada tantos segundos una linea "[prof]" con prom/p95/max en ms de: el frame
++	-- entero (de present a present), love.update, love.draw y present (espera de GPU/vsync);
++	-- los "tirones" (frames de mas de 25 ms), el % del tiempo durmiendo y la memoria de Lua.
++	-- Al terminar cada hilo de love.thread imprime cuanto duro. Sirve para cualquier .love.
++	-- Con LOVE_PS4_PROFILE_GFX=1, ademas el desglose por funcion de love.graphics (mas abajo).
++	local profenv = os.getenv("LOVE_PS4_PROFILE")
++	if profenv and love.timer and love.graphics then
++		local ok, err = pcall(function()
++			local getTime, period = love.timer.getTime, tonumber(profenv) or 5
++			local S = { update = {}, draw = {}, present = {}, frame = {} }
++			local sleepms, wrapped, threads = 0, {}, setmetatable({}, { __mode = "k" })
++			local tstart, lastp, nextReport = getTime(), nil, getTime() + period
++			print(("[prof] %s, jit=%s, reporte cada %gs"):format(_VERSION,
++				type(jit) == "table" and (jit.version .. (jit.status() and " on" or " off")) or "no", period))
++			local function finish(key, a, ...)
++				local s = S[key]; s[#s + 1] = (getTime() - a) * 1000
++				return ...
++			end
++			local function rewrap(key)
++				local f = love[key]
++				if f and f ~= wrapped[key] then
++					wrapped[key] = function(...) local a = getTime(); return finish(key, a, f(...)) end
++					love[key] = wrapped[key]
++				end
++			end
++			local function stats(t)
++				local n = #t
++				if n == 0 then return "-" end
++				table.sort(t)
++				local sum = 0
++				for i = 1, n do sum = sum + t[i] end
++				return ("%.1f/%.1f/%.1f"):format(sum / n, t[math.ceil(n * 0.95)], t[n])
++			end
++			local sleep = love.timer.sleep
++			love.timer.sleep = function(sec)
++				local a = getTime()
++				sleep(sec)
++				sleepms = sleepms + (getTime() - a) * 1000
++			end
++			-- LOVE_PS4_PROFILE_GFX=1: ademas, cuanto tiempo pasa DENTRO de cada funcion de
++			-- love.graphics (ms y llamadas por frame, la llamada mas larga) y cuanto del draw queda
++			-- FUERA de ellas (el Lua del juego y los metodos de objetos, p.ej. Shader:send). Separa
++			-- espera de trabajo: una llamada por frame que se lleva casi todo el draw es una espera
++			-- (imagen del swapchain, vsync); el tiempo repartido o fuera de love.graphics es trabajo.
++			-- Cuesta dos getTime por llamada: comparar el draw con y sin esta variable.
++			local G
++			if os.getenv("LOVE_PS4_PROFILE_GFX") then
++				G = {}
++				for name, f in pairs(love.graphics) do
++					if type(f) == "function" and name ~= "present" then
++						local r = { ms = 0, n = 0, max = 0 }
++						G[name] = r
++						local function done(a, ...)
++							local d = (getTime() - a) * 1000
++							r.ms, r.n = r.ms + d, r.n + 1
++							if d > r.max then r.max = d end
++							return ...
++						end
++						love.graphics[name] = function(...) local a = getTime(); return done(a, f(...)) end
++					end
++				end
++			end
++			if love.thread then
++				local newThread, startWrapped = love.thread.newThread, false
++				love.thread.newThread = function(src, ...)
++					local th = newThread(src, ...)
++					local mt = getmetatable(th)
++					if not startWrapped and type(mt) == "table" and mt.start then
++						local start = mt.start
++						mt.start = function(t, ...)
++							local r = threads[t]
++							if r then r.t0 = getTime() end
++							return start(t, ...)
++						end
++						startWrapped = true
++					end
++					threads[th] = { name = type(src) == "string" and src or tostring(src) }
++					return th
++				end
++			end
++			local present = love.graphics.present
++			love.graphics.present = function(...)
++				local a = getTime()
++				present(...)
++				local now = getTime()
++				local p = S.present; p[#p + 1] = (now - a) * 1000
++				if lastp then local f = S.frame; f[#f + 1] = (now - lastp) * 1000 end
++				lastp = now
++				rewrap("update"); rewrap("draw")
++				for th, rec in pairs(threads) do
++					if rec.t0 and not th:isRunning() then
++						local e = th:getError()
++						print(("[prof] hilo %s: %.2f s%s"):format(rec.name, now - rec.t0, e and (" ERROR: " .. e) or ""))
++						threads[th] = nil
++					end
++				end
++				if now >= nextReport then
++					local fr, span, hitches = S.frame, now - (nextReport - period), 0
++					for i = 1, #fr do if fr[i] > 25 then hitches = hitches + 1 end end
++					print(("[prof] t=%.0fs fps=%.1f frame=%s tirones=%d | update=%s draw=%s present=%s | sleep=%.0f%% lua=%.1fMB"):format(
++						now - tstart, #fr / span, stats(fr), hitches, stats(S.update), stats(S.draw),
++						stats(S.present), sleepms / (span * 10), collectgarbage("count") / 1024))
++					if G then
++						-- "fuera" es aproximado: "dentro" incluye las pocas llamadas desde love.update
++						local nd, dsum, tot, calls, list, parts = math.max(#S.draw, 1), 0, 0, 0, {}, {}
++						for i = 1, #S.draw do dsum = dsum + S.draw[i] end
++						for name, r in pairs(G) do
++							if r.n > 0 then list[#list + 1] = name; tot = tot + r.ms; calls = calls + r.n end
++						end
++						table.sort(list, function(x, y) return G[x].ms > G[y].ms end)
++						for i = 1, math.min(6, #list) do
++							local r = G[list[i]]
++							parts[i] = ("%s %.2fms %.1fx max=%.1f"):format(list[i], r.ms / nd, r.n / nd, r.max)
++						end
++						print(("[prof] gfx: dentro=%.2fms en %.0f llamadas, fuera=%.2fms (por frame) | %s"):format(
++							tot / nd, calls / nd, (dsum - tot) / nd, table.concat(parts, " | ")))
++						for _, r in pairs(G) do r.ms, r.n, r.max = 0, 0, 0 end
++					end
++					S = { update = {}, draw = {}, present = {}, frame = {} }
++					sleepms, nextReport = 0, now + period
++				end
++			end
++			rewrap("update"); rewrap("draw")
++		end)
++		if not ok then print("[prof] no se pudo instalar el medidor: " .. tostring(err)) end
++	end
+ end
+ 
+ local print, debug, tostring = print, debug, tostring
+@@ -348,6 +484,14 @@ return function()
+ 	local function deferErrhand(...)
+ 		local errhand = love.errorhandler or love.errhand
+ 		local handler = (not inerror and errhand) or error_printer
++		-- LOVE_PS4: el error al netlog aunque el handler sea del juego (parche 18). El de LOVE
++		-- (callbacks.lua) ya lo imprime; error_printer tambien. Nivel 3: saltea pcall y esta funcion.
++		if handler ~= error_printer then
++			local info = debug.getinfo(handler, "S")
++			if not (info and info.source == "=[love \"callbacks.lua\"]") then
++				pcall(error_printer, ..., 3)
++			end
++		end
+ 		inerror = true
+ 		func = handler(...)
+ 	end
+diff --git a/src/modules/love/love.cpp b/src/modules/love/love.cpp
+index 0202a85266f8be89b13fe5b2908f02ed39cd77cf..1cf72fecaf0f5771e309498cd2c97188f8ae34b8 100644
+--- a/src/modules/love/love.cpp
++++ b/src/modules/love/love.cpp
+@@ -478,6 +478,8 @@ int luaopen_love(lua_State *L)
+ 	lua_pushstring(L, "iOS");
+ #elif defined(LOVE_ANDROID)
+ 	lua_pushstring(L, "Android");
++#elif defined(LOVE_PS4)
++	lua_pushstring(L, "PS4");
+ #elif defined(LOVE_LINUX)
+ 	lua_pushstring(L, "Linux");
+ #else
+diff --git a/src/modules/system/System.cpp b/src/modules/system/System.cpp
+index b79265922302ba8cb63ca1455e8cfd01840a3ec3..d65bbf965d9ff5a1d8f11c7f4716b1cc18121d40 100644
+--- a/src/modules/system/System.cpp
++++ b/src/modules/system/System.cpp
+@@ -74,6 +74,8 @@ std::string System::getOS() const
+ 	return "Windows";
+ #elif defined(LOVE_ANDROID)
+ 	return "Android";
++#elif defined(LOVE_PS4)
++	return "PS4";
+ #elif defined(LOVE_LINUX)
+ 	return "Linux";
+ #else
+@@ -90,6 +92,14 @@ extern "C"
+ 
+ bool System::openURL(const std::string &url) const
+ {
++#ifdef LOVE_PS4
++	// LOVE_PS4: sin fork(). La rama de Linux de esta funcion hace fork()+exec de
++	// xdg-open (System.cpp:128), y Orbis no tiene ninguno de los dos. gen1recomp
++	// llama openURL en 17 sitios -- creditos, enlaces del launcher, reportes --
++	// asi que sin esto hay un crash latente esperando a que alguien toque un link.
++	(void)url;
++	return false;
++#endif
+ 
+ #if defined(LOVE_MACOSX)
+ 
+diff --git a/src/modules/thread/LuaThread.cpp b/src/modules/thread/LuaThread.cpp
+index 79bc4d0c026554dead658280fc2f39507b469150..f707a03ea3247a8f3c15eb6262667f0e42a74c26 100644
+--- a/src/modules/thread/LuaThread.cpp
++++ b/src/modules/thread/LuaThread.cpp
+@@ -19,6 +19,16 @@
+  **/
+ 
+ #include "LuaThread.h"
++
++#if defined(LOVE_PS4) && defined(LOVE_PS4_GUARD_ALLOC)
++// Allocator con canarios, para localizar quien desborda. Ver love-ps4/guardalloc.c.
++extern "C" void *ps4_guard_alloc(void *ud, void *ptr, size_t osize, size_t nsize);
++#endif
++
++
++#ifdef LOVE_PS4
++extern "C" int luaopen_bit(lua_State *L);
++#endif
+ #include "event/Event.h"
+ #include "common/config.h"
+ 
+@@ -51,9 +61,24 @@ void LuaThread::threadFunction()
+ 	error.clear();
+ 	haserror = false;
+ 
++#if defined(LOVE_PS4) && defined(LOVE_PS4_GUARD_ALLOC)
++	lua_State *L = lua_newstate(ps4_guard_alloc, nullptr);
++#else
+ 	lua_State *L = luaL_newstate();
++#endif
+ 	luaL_openlibs(L);
+ 
++#ifdef LOVE_PS4
++	// ⚠ CADA HILO DE LOVE ES UN ESTADO DE LUA NUEVO Y VACIO, asi que lo que se
++	// instala en el estado principal (love.cpp) no existe aqui.  Sin esto, un
++	// worker que haga require("bit") falla con "module 'bit' not found" aunque
++	// el hilo principal la tenga -- y el import de ROM de gen1recomp corre
++	// justamente en un hilo (RomImporter.lua:1955 -> ExtractThread.lua).
++	// luaopen_bit deja la tabla en el global `bit` y en package.loaded.
++	luaopen_bit(L);
++	lua_pop(L, 1);
++#endif
++
+ #ifdef LOVE_BUILD_STANDALONE
+ 	// Call LuaJIT-specific setup again. While it's quite late to call it at
+ 	// this point, it still needed to turn off JIT compilation (if necessary)
+diff --git a/src/modules/thread/sdl/Thread.cpp b/src/modules/thread/sdl/Thread.cpp
+index aa69b9276ace5478e9adb2174200a9990c6bdfb1..0a34a30d39cdc5801f56ffe64cdcf1ccb6645ad0 100644
+--- a/src/modules/thread/sdl/Thread.cpp
++++ b/src/modules/thread/sdl/Thread.cpp
+@@ -42,7 +42,7 @@ Thread::~Thread()
+ 
+ bool Thread::start()
+ {
+-#if defined(LOVE_LINUX)
++#if defined(LOVE_LINUX) && !defined(LOVE_PS4)
+ 	// Temporarly block signals, as the thread inherits this mask
+ 	love::thread::ScopedDisableSignals disableSignals;
+ #endif
+diff --git a/src/modules/thread/threads.cpp b/src/modules/thread/threads.cpp
+index cf76dcbf99efa1c243889d93816d5aec81817d20..88b37dc6eea06b1dcc1ed306911d70a4939341b4 100644
+--- a/src/modules/thread/threads.cpp
++++ b/src/modules/thread/threads.cpp
+@@ -20,7 +20,7 @@
+ 
+ #include "threads.h"
+ 
+-#if defined(LOVE_LINUX)
++#if defined(LOVE_LINUX) && !defined(LOVE_PS4)
+ #include <signal.h>
+ #endif
+ 
+@@ -157,7 +157,7 @@ Conditional *ConditionalRef::operator->() const
+ 	return conditional;
+ }
+ 
+-#if defined(LOVE_LINUX)
++#if defined(LOVE_LINUX) && !defined(LOVE_PS4)
+ static sigset_t oldset;
+ 
+ void disableSignals()
+diff --git a/src/modules/thread/threads.h b/src/modules/thread/threads.h
+index e5d8bd059ba959acb55b55fe4fc0c216865d024b..3a130b83f4e4f3b116847b9eca24d04228bf5fa2 100644
+--- a/src/modules/thread/threads.h
++++ b/src/modules/thread/threads.h
+@@ -129,7 +129,7 @@ Mutex *newMutex();
+ Conditional *newConditional();
+ Thread *newThread(Threadable *t);
+ 
+-#if defined(LOVE_LINUX)
++#if defined(LOVE_LINUX) && !defined(LOVE_PS4)
+ void disableSignals();
+ void reenableSignals();
+ 
+diff --git a/src/modules/window/sdl/Window.cpp b/src/modules/window/sdl/Window.cpp
+index e9175f3d40b2d627578395aea8c2756c26303870..99230417c7978d96173dec490f4fdc6f11b1d006 100644
+--- a/src/modules/window/sdl/Window.cpp
++++ b/src/modules/window/sdl/Window.cpp
+@@ -97,6 +97,16 @@ void Window::setGraphics(graphics::Graphics *graphics)
+ 
+ void Window::setGLFramebufferAttributes(int msaa, bool sRGB, bool stencil, int depth)
+ {
++#ifdef LOVE_PS4
++	// Mesa/EGL elige la config; pedir un set completo hace fallar
++	// eglChooseConfig (es lo que obligo al port de Switch a no pedir nada).
++	// Se pide SOLO el stencil: sdlgl midio stencil 0 en la config por defecto,
++	// y love.graphics.stencil lo necesita. Si esto rompe la creacion de la
++	// superficie, quitar tambien esta linea es el fallback conocido.
++	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, stencil ? 8 : 0);
++	(void)msaa; (void)sRGB; (void)depth;
++	return;
++#endif
+ 	// Set GL window / framebuffer attributes.
+ 	SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+ 	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+@@ -323,8 +333,14 @@ bool Window::createWindowAndContext(int x, int y, int w, int h, Uint32 windowfla
+ 		// Make sure the context's version is at least what we requested.
+ 		if (context && !checkGLVersion(attribs, glversion))
+ 		{
++#ifdef LOVE_PS4
++			// El parser de version es fragil y aqui el contexto es bueno:
++			// 4.6 compat sobra para cualquier cosa que LOVE pida.
++			SDL_Log("love: checkGLVersion fallo sobre '%s'; se conserva el contexto", glversion.c_str());
++#else
+ 			SDL_GL_DeleteContext(context);
+ 			context = nullptr;
++#endif
+ 		}
+ 
+ 		if (!context)
+@@ -427,8 +443,15 @@ bool Window::setWindow(int width, int height, WindowSettings *settings)
+ 
+ 	WindowSettings f;
+ 
++#ifndef LOVE_PS4
+ 	if (settings)
+ 		f = *settings;
++#else
++	// La superficie EGL admite una sola instancia viva y recrearla deja el
++	// video muerto sin error. Se ignoran los settings del juego, igual que
++	// hizo el port de Switch, y la ventana queda en el modo de scan-out.
++	(void)settings;
++#endif
+ 
+ 	f.minwidth = std::max(f.minwidth, 1);
+ 	f.minheight = std::max(f.minheight, 1);
+diff --git a/src/common/ps4.cpp b/src/common/ps4.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..3c87dd969f53817c8d0dc8ecabf2bffeb6481839
+--- /dev/null
++++ b/src/common/ps4.cpp
+@@ -0,0 +1,82 @@
++#include "ps4.h"
++
++#ifdef LOVE_PS4
++
++#include <sys/stat.h>
++#include <unistd.h>
++#include <cstdio>
++
++#ifndef LOVE_PS4_DATA_DIR
++#define LOVE_PS4_DATA_DIR "/data/love"
++#endif
++
++namespace love
++{
++namespace ps4
++{
++
++std::string getExecutablePath()
++{
++	// El loader monta el paquete en /app0 y el ejecutable siempre se llama asi.
++	return "/app0/eboot.bin";
++}
++
++std::string getUserDirectory()
++{
++	// /data es el unico arbol escribible que ve un homebrew. Se crea una vez y
++	// se cachea: setupWriteDirectory() compara este prefijo contra save_path_full
++	// para decidir si la plataforma es "sandboxed", y lo es.
++	static std::string dir;
++	if (dir.empty())
++	{
++		mkdir(LOVE_PS4_DATA_DIR, 0777);
++		dir = LOVE_PS4_DATA_DIR "/";
++	}
++	return dir;
++}
++
++std::string getLoveInResources(bool &fused)
++{
++	// ⚠ /app0 ANTES QUE /data (release, 23-sep). Un paquete FUSIONADO (runtime +
++	// game.love, lo que arma tools/fuse-pkg.sh) corre SIEMPRE su propio juego:
++	// antes, un game.love suelto en /data/love le ganaba y el paquete de un juego
++	// arrancaba otro. El runtime generico no trae juego en /app0, asi que para el
++	// sigue valiendo /data/love/game.love, y con el el ciclo de trabajo de
++	// siempre: subir el .love por FTP en segundos, sin reempaquetar.
++	static const char *candidates[] = {
++		"/app0/game.love",
++		"/app0/main.lua",
++		LOVE_PS4_DATA_DIR "/game.love",
++		LOVE_PS4_DATA_DIR "/main.lua",
++	};
++
++	for (const char *path : candidates)
++	{
++		struct stat st;
++		if (stat(path, &st) == 0 && S_ISREG(st.st_mode))
++		{
++			fused = true;
++			// main.lua significa modo directorio: se monta la carpeta que lo
++			// contiene, no el archivo.
++			std::string p(path);
++			size_t slash = p.rfind('/');
++			if (p.find("main.lua") != std::string::npos && slash != std::string::npos)
++				return p.substr(0, slash);
++			return p;
++		}
++	}
++
++	fused = false;
++	return std::string();
++}
++
++int showMessageBox(const std::string &title, const std::string &message)
++{
++	std::printf("[love] %s: %s\n", title.c_str(), message.c_str());
++	return 0;
++}
++
++} // ps4
++} // love
++
++#endif // LOVE_PS4
+diff --git a/src/common/ps4.h b/src/common/ps4.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..1680d282ba3ad6850eef6801ecfb094a29065b87
+--- /dev/null
++++ b/src/common/ps4.h
+@@ -0,0 +1,38 @@
++/**
++ * Capa de plataforma PS4 (Orbis) para LOVE 11.5.
++ * Equivalente de src/common/nx.cpp del port de Switch, sin lo que aqui no aplica:
++ * no hay touch (asi que no se sintetizan eventos de mouse) y no se toca
++ * aligned_alloc (posix_memalign existe en este SDK).
++ **/
++#ifndef LOVE_PS4_H
++#define LOVE_PS4_H
++
++#include "config.h"
++#ifdef LOVE_PS4
++
++#include <string>
++
++namespace love
++{
++namespace ps4
++{
++
++/// Ruta del ejecutable. No hay /proc en Orbis.
++std::string getExecutablePath();
++
++/// Directorio escribible del titulo. Se crea si no existe.
++std::string getUserDirectory();
++
++/// Busca el .love que la consola debe ejecutar: /app0/game.love, luego
++/// /app0/main.lua (modo directorio). Devuelve "" si no hay ninguno.
++/// Es el mecanismo por el que el titulo arranca sin linea de comandos.
++std::string getLoveInResources(bool &fused);
++
++/// SDL no tiene messagebox en esta plataforma; se reporta por log.
++int showMessageBox(const std::string &title, const std::string &message);
++
++} // ps4
++} // love
++
++#endif // LOVE_PS4
++#endif // LOVE_PS4_H

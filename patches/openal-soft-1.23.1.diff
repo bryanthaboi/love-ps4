@@ -1,0 +1,26 @@
+diff --git a/alc/context.cpp b/alc/context.cpp
+index e02c549b366fec5f457450f0555e69025389743c..37f1cd56079a2779da93b3185146647d160d6b35 100644
+--- a/alc/context.cpp
++++ b/alc/context.cpp
+@@ -105,7 +105,7 @@ thread_local ALCcontext::ThreadCtx ALCcontext::sThreadContext;
+ ALeffect ALCcontext::sDefaultEffect;
+ 
+ 
+-#ifdef __MINGW32__
++#if defined(__MINGW32__) || defined(__ORBIS__)
+ ALCcontext *ALCcontext::getThreadContext() noexcept
+ { return sLocalContext; }
+ void ALCcontext::setThreadContext(ALCcontext *context) noexcept
+diff --git a/alc/context.h b/alc/context.h
+index e8efdbf1d41965f0ef0aab4fd4654f099d5bc4e6..9d6beb6481ce486c2632bed097b59eafa99d2f17 100644
+--- a/alc/context.h
++++ b/alc/context.h
+@@ -172,7 +172,7 @@ public:
+      * object. Add a wrapper function for it that only accesses it where it's
+      * defined.
+      */
+-#ifdef __MINGW32__
++#if defined(__MINGW32__) || defined(__ORBIS__)
+     static ALCcontext *getThreadContext() noexcept;
+     static void setThreadContext(ALCcontext *context) noexcept;
+ #else
