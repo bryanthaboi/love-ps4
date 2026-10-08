@@ -69,7 +69,7 @@ index ed31a1e01f784ed79e3ab2f9d7b7dff86088a7c6..cf8777ee95688569e9be203ce6e8f62b
      #ifdef ETIME
          case ETIME: return DRFLAC_TIMEOUT;
 diff --git a/src/libraries/physfs/physfs_platform_posix.c b/src/libraries/physfs/physfs_platform_posix.c
-index 7ba5e10708ccde43e4f47a9a2dcfafb81fe178b7..daff123c95cc8b5bb3273c8bde6017b078f71617 100644
+index 7ba5e10708ccde43e4f47a9a2dcfafb81fe178b7..38a2845f30c08cb14c19f3092344d2464020b7fd 100644
 --- a/src/libraries/physfs/physfs_platform_posix.c
 +++ b/src/libraries/physfs/physfs_platform_posix.c
 @@ -85,6 +85,19 @@ static char *getUserDirByUID(void)
@@ -100,6 +100,41 @@ index 7ba5e10708ccde43e4f47a9a2dcfafb81fe178b7..daff123c95cc8b5bb3273c8bde6017b0
  } /* __PHYSFS_platformCalcUserDir */
  
  
+@@ -149,9 +163,16 @@ PHYSFS_EnumerateCallbackResult __PHYSFS_platformEnumerate(const char *dirname,
+ 
+ int __PHYSFS_platformMkDir(const char *path)
+ {
++#ifdef __ORBIS__
++    const int rc = mkdir(path, 0777);
++    BAIL_IF(rc == -1, errcodeFromErrno(), 0);
++    chmod(path, 0777);
++    return 1;
++#else
+     const int rc = mkdir(path, S_IRWXU);
+     BAIL_IF(rc == -1, errcodeFromErrno(), 0);
+     return 1;
++#endif
+ } /* __PHYSFS_platformMkDir */
+ 
+ 
+@@ -182,9 +203,17 @@ static void *doOpen(const char *filename, int mode)
+ #endif
+ 
+     do {
++#ifdef __ORBIS__
++        fd = open(filename, mode, 0666);
++#else
+         fd = open(filename, mode, S_IRUSR | S_IWUSR);
++#endif
+     } while ((fd < 0) && (errno == EINTR));
+     BAIL_IF(fd < 0, errcodeFromErrno(), NULL);
++#ifdef __ORBIS__
++    if (mode & O_CREAT)
++        fchmod(fd, 0666);
++#endif
+ 
+ #if !defined(O_CLOEXEC) && defined(FD_CLOEXEC)
+     set_CLOEXEC(fd);
 diff --git a/src/libraries/physfs/physfs_platform_unix.c b/src/libraries/physfs/physfs_platform_unix.c
 index b945e03fd96bb1ce746198b5d261f23ef3598563..1c360d75b8540042d9bc715198aae342686821ed 100644
 --- a/src/libraries/physfs/physfs_platform_unix.c
@@ -141,7 +176,7 @@ index 1ac17d9c6fcce48f2abd2bbd32227cd02f227b05..b43badeb548d7d8aa15a6838e33a749e
  #  define PHYSFS_PLATFORM_FREEBSD 1
  #  define PHYSFS_PLATFORM_BSD 1
 diff --git a/src/love.cpp b/src/love.cpp
-index 97673a33adb7a3863efbea9bf4e284359b228b8e..b3ebc3e7321b98a6eac1fb7d179de06d99a523d8 100644
+index 97673a33adb7a3863efbea9bf4e284359b228b8e..ed22990130886a0a76cb5915812a67b2e34358f9 100644
 --- a/src/love.cpp
 +++ b/src/love.cpp
 @@ -21,8 +21,36 @@
@@ -309,7 +344,7 @@ index 97673a33adb7a3863efbea9bf4e284359b228b8e..b3ebc3e7321b98a6eac1fb7d179de06d
  	retval = 0;
  	DoneAction done = DONE_QUIT;
  
-@@ -263,10 +367,79 @@ static DoneAction runlove(int argc, char **argv, int &retval)
+@@ -263,10 +367,81 @@ static DoneAction runlove(int argc, char **argv, int &retval)
  
  int main(int argc, char **argv)
  {
@@ -368,7 +403,9 @@ index 97673a33adb7a3863efbea9bf4e284359b228b8e..b3ebc3e7321b98a6eac1fb7d179de06d
 +		// LOVE_PS4: cache de shaders de Mesa en disco (parche 20 de patches/love-plataforma.py)
 +		setenv("MESA_SHADER_CACHE_DIR", "/data/love/cache", 0);
 +		const char *dir = getenv("MESA_SHADER_CACHE_DIR");
++		love::ps4::openDataPermissions();
 +		const int rc = mkdir(dir, 0777);
++		chmod(dir, 0777);
 +		ps4_log("MESA_SHADER_CACHE_DIR=%s (mkdir rc=%d%s)", dir, rc,
 +		        rc == 0 ? ", creada" : (errno == EEXIST ? ", ya existia" : ", ⚠ sin cache de shaders"));
 +	}
@@ -389,7 +426,7 @@ index 97673a33adb7a3863efbea9bf4e284359b228b8e..b3ebc3e7321b98a6eac1fb7d179de06d
  		return 1;
  	}
  
-@@ -275,7 +448,13 @@ int main(int argc, char **argv)
+@@ -275,7 +450,13 @@ int main(int argc, char **argv)
  
  	do
  	{
@@ -403,7 +440,7 @@ index 97673a33adb7a3863efbea9bf4e284359b228b8e..b3ebc3e7321b98a6eac1fb7d179de06d
  
  #ifdef LOVE_IOS
  		// on iOS we should never programmatically exit the app, so we'll just
-@@ -289,6 +468,21 @@ int main(int argc, char **argv)
+@@ -289,6 +470,21 @@ int main(int argc, char **argv)
  	SDL_Quit();
  #endif
  
@@ -973,17 +1010,19 @@ index e9175f3d40b2d627578395aea8c2756c26303870..99230417c7978d96173dec490f4fdc6f
  	f.minheight = std::max(f.minheight, 1);
 diff --git a/src/common/ps4.cpp b/src/common/ps4.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3c87dd969f53817c8d0dc8ecabf2bffeb6481839
+index 0000000000000000000000000000000000000000..47079814442097567ef71b91e449b93ab9286bfe
 --- /dev/null
 +++ b/src/common/ps4.cpp
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,130 @@
 +#include "ps4.h"
 +
 +#ifdef LOVE_PS4
 +
 +#include <sys/stat.h>
++#include <dirent.h>
 +#include <unistd.h>
 +#include <cstdio>
++#include <cstring>
 +
 +#ifndef LOVE_PS4_DATA_DIR
 +#define LOVE_PS4_DATA_DIR "/data/love"
@@ -1049,6 +1088,52 @@ index 0000000000000000000000000000000000000000..3c87dd969f53817c8d0dc8ecabf2bffe
 +	return std::string();
 +}
 +
++static void openPermissionsAt(const std::string &path, int depth)
++{
++	struct stat st;
++	if (lstat(path.c_str(), &st) != 0)
++		return;
++	if (S_ISDIR(st.st_mode))
++	{
++		if ((st.st_mode & 0777) != 0777)
++			chmod(path.c_str(), 0777);
++		if (depth >= 32)
++			return;
++		DIR *d = opendir(path.c_str());
++		if (!d)
++			return;
++		while (struct dirent *e = readdir(d))
++		{
++			if (std::strcmp(e->d_name, ".") == 0 || std::strcmp(e->d_name, "..") == 0)
++				continue;
++			openPermissionsAt(path + "/" + e->d_name, depth + 1);
++		}
++		closedir(d);
++	}
++	else if (S_ISREG(st.st_mode))
++	{
++		if ((st.st_mode & 0666) != 0666)
++			chmod(path.c_str(), (st.st_mode & 0777) | 0666);
++	}
++}
++
++void openDataPermissions()
++{
++	umask(0);
++	mkdir(LOVE_PS4_DATA_DIR, 0777);
++	const char *marker = LOVE_PS4_DATA_DIR "/.permissions-v1";
++	struct stat st;
++	if (stat(marker, &st) == 0)
++	{
++		chmod(LOVE_PS4_DATA_DIR, 0777);
++		openPermissionsAt(LOVE_PS4_DATA_DIR "/cache", 0);
++		return;
++	}
++	openPermissionsAt(LOVE_PS4_DATA_DIR, 0);
++	if (FILE *f = std::fopen(marker, "w"))
++		std::fclose(f);
++}
++
 +int showMessageBox(const std::string &title, const std::string &message)
 +{
 +	std::printf("[love] %s: %s\n", title.c_str(), message.c_str());
@@ -1061,10 +1146,10 @@ index 0000000000000000000000000000000000000000..3c87dd969f53817c8d0dc8ecabf2bffe
 +#endif // LOVE_PS4
 diff --git a/src/common/ps4.h b/src/common/ps4.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..1680d282ba3ad6850eef6801ecfb094a29065b87
+index 0000000000000000000000000000000000000000..80f096f982bac115870f9116ddb16ef6596fe774
 --- /dev/null
 +++ b/src/common/ps4.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,41 @@
 +/**
 + * Capa de plataforma PS4 (Orbis) para LOVE 11.5.
 + * Equivalente de src/common/nx.cpp del port de Switch, sin lo que aqui no aplica:
@@ -1094,6 +1179,9 @@ index 0000000000000000000000000000000000000000..1680d282ba3ad6850eef6801ecfb094a
 +/// /app0/main.lua (modo directorio). Devuelve "" si no hay ninguno.
 +/// Es el mecanismo por el que el titulo arranca sin linea de comandos.
 +std::string getLoveInResources(bool &fused);
++
++/// Abre permisos (directorios 0777, archivos 0666) en todo LOVE_PS4_DATA_DIR.
++void openDataPermissions();
 +
 +/// SDL no tiene messagebox en esta plataforma; se reporta por log.
 +int showMessageBox(const std::string &title, const std::string &message);

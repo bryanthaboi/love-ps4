@@ -12,7 +12,7 @@ a sLocalContext/sThreadContext del arbol estan en context.cpp y context.h.
 """
 import pathlib, sys
 
-A = pathlib.Path.home() / "Projects/love-ps4/deps/openal-soft"
+A = pathlib.Path(__file__).resolve().parent.parent / "deps/openal-soft"
 applied, skipped = [], []
 
 def patch(relpath, old, new, tag):

@@ -6,7 +6,7 @@ para el SDK oficial de Sony. Aca van solo las diferencias que necesita un homebr
 """
 import pathlib, sys, os
 
-T = pathlib.Path(os.environ.get("LUAJIT_TREE") or pathlib.Path.home() / "Projects/love-ps4/deps/luajit")
+T = pathlib.Path(os.environ.get("LUAJIT_TREE") or pathlib.Path(__file__).resolve().parent.parent / "deps/luajit")
 applied, skipped = [], []
 
 def patch(relpath, old, new, tag):
